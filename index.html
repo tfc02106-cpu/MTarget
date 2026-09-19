@@ -44,7 +44,18 @@ main{max-width:1240px;margin:0 auto;padding:22px 20px 40px;
   display:grid;grid-template-columns:minmax(0,25rem) minmax(0,1fr);gap:26px;align-items:start}
 @media(max-width:900px){main{grid-template-columns:1fr;gap:20px}}
 section{background:var(--surface);border:1px solid var(--rule);border-radius:4px}
-section+section{margin-top:20px}
+section+section,details+section,section+details{margin-top:20px}
+details{background:var(--surface);border:1px solid var(--rule);border-radius:4px}
+details summary{padding:14px 20px;cursor:pointer;font-weight:700;font-size:1.02rem;
+  display:flex;align-items:baseline;gap:10px;list-style:none}
+details summary::-webkit-details-marker{display:none}
+details summary::after{content:"";width:8px;height:8px;margin-left:auto;flex:none;
+  border-right:2px solid var(--ink-soft);border-bottom:2px solid var(--ink-soft);
+  transform:rotate(45deg) translateY(-2px)}
+details[open] summary::after{transform:rotate(-135deg) translateY(2px)}
+details summary:hover{color:var(--accent)}
+details summary small{font-weight:400;font-size:.84rem;color:var(--ink-soft)}
+@media(min-width:901px){.rightcol{position:sticky;top:12px}}
 .pad{padding:0 20px 18px}
 h2{margin:0;font-size:1.02rem;font-weight:700;padding:14px 20px 12px}
 h3{margin:20px 0 8px;font-size:.95rem;color:var(--ink-soft);font-weight:600}
@@ -177,8 +188,8 @@ footer{max-width:1240px;margin:0 auto;padding:0 20px 46px;font-size:.85rem;color
 
 <main>
 <div>
-  <section>
-    <h2>量測設定</h2>
+  <details id="setup">
+    <summary><span>量測設定</span><small id="setupBrief"></small></summary>
     <div class="pad">
       <label for="subject">量測對象與位置</label>
       <input id="subject" type="text" value="白板筆筆桿外徑（距筆蓋端 30 mm）">
@@ -198,7 +209,7 @@ footer{max-width:1240px;margin:0 auto;padding:0 20px 46px;font-size:.85rem;color
       </select>
     </div>
     <div class="flagbox" id="centerNote"></div>
-  </section>
+  </details>
 
   <section>
     <h2>讀值紀錄（mm）</h2>
@@ -215,7 +226,7 @@ footer{max-width:1240px;margin:0 auto;padding:0 20px 46px;font-size:.85rem;color
   </section>
 </div>
 
-<div>
+<div class="rightcol">
   <section>
     <div class="tabs" role="tablist">
       <button id="tabT" role="tab" aria-selected="true" onclick="setView('target')">靶心</button>
@@ -248,6 +259,8 @@ const K=5, N=5;
 const COLORS=["#0E6BA8","#A82C22","#1E6F50","#6A4C93","#B5651D"];
 let view="target", data=Array.from({length:K},()=>Array(N).fill("")), firstDraw=true;
 let names=Array(K).fill("");
+let animSet=new Set();
+const noMotion=()=>window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const who=i=>names[i].trim()||("同學 "+(i+1));
 
 const $=id=>document.getElementById(id);
@@ -303,7 +316,7 @@ function buildGrid(){
   }
   $("grid").innerHTML=h+"</tbody>";
 }
-function sync(i,j,v){ data[i][j]=v; render(); }
+function sync(i,j,v){ data[i][j]=v; animSet=new Set([i+"_"+j]); render(); }
 function setName(i,v){ names[i]=v; render(); }
 function clearAll(){ data=Array.from({length:K},()=>Array(N).fill("")); names=Array(K).fill(""); buildGrid(); render(); }
 function demo(){
@@ -313,9 +326,10 @@ function demo(){
         [47.320,47.324,47.322,47.323,47.321],
         [47.350,47.353,47.351,47.354,47.352]].map(r=>r.map(v=>v.toFixed(3)));
   names=["陳","林","黃","張","李"];
+  animSet=new Set(); for(let i=0;i<K;i++) for(let j=0;j<N;j++) animSet.add(i+"_"+j);
   buildGrid(); render();
 }
-function spoil(){ if(!data[4][3]) demo(); data[4][3]="47.490"; buildGrid(); render(); }
+function spoil(){ if(!data[4][3]) demo(); data[4][3]="47.490"; animSet=new Set(["4_3"]); buildGrid(); render(); }
 function exportCSV(){
   const rows=[["姓氏","第1次","第2次","第3次","第4次","第5次"]];
   data.forEach((r,i)=>rows.push([who(i),...r]));
@@ -327,7 +341,8 @@ function exportCSV(){
 
 function drawTarget(center,s,per){
   const W=640,H=562,cx=W/2,cy=258,R=196;
-  const px=d=>Math.min(Math.abs(d)/s,3.35)/3*R;
+  const px=d=>Math.min(Math.abs(d)/s,3.05)/3*R;
+  const far=d=>Math.abs(d)/s>3.05;
   let g=`<svg viewBox="0 0 ${W} ${H}">`;
   g+=firstDraw
     ? `<g opacity="0"><animate attributeName="opacity" to="1" dur="0.45s" fill="freeze"/>`
@@ -338,20 +353,52 @@ function drawTarget(center,s,per){
   g+=`<line x1="${cx}" y1="${cy-9}" x2="${cx}" y2="${cy+9}" stroke="var(--ink)" stroke-width="1.5"/>`;
   const dec = s<0.01 ? 4 : 3;
   [1,2,3].forEach(k=>{
-    const yy=cy-9;
-    g+=`<text x="${cx+R*k/3-6}" y="${yy}" font-size="13" fill="var(--ink-soft)" text-anchor="end">${k}s</text>`;
-    g+=`<text x="${cx+R*k/3-6}" y="${yy+15}" font-size="12.5" fill="var(--ink-soft)" text-anchor="end">±${(k*s).toFixed(dec)}</text>`;
+    const rr=R*k/3, lx=cx+rr*0.74, ly=cy-rr*0.74;
+    g+=`<rect x="${lx-27}" y="${ly-19}" width="54" height="36" rx="3" fill="var(--surface)" opacity=".88"/>`;
+    g+=`<text x="${lx}" y="${ly-3}" font-size="13" fill="var(--ink-soft)" text-anchor="middle">${k}s</text>`;
+    g+=`<text x="${lx}" y="${ly+12}" font-size="12.5" fill="var(--ink-soft)" text-anchor="middle">±${(k*s).toFixed(dec)}</text>`;
   });
-  g+=`<text x="${cx}" y="${cy+26}" font-size="13" fill="var(--ink-soft)" text-anchor="middle">靶心 ${center.toFixed(dec)} mm</text>`;
   per.forEach((row,i)=>{
     const base=-Math.PI/2+i*2*Math.PI/K;
     row.forEach((v,j)=>{
       const d=v-center, r=px(d), ang=base+(j-(row.length-1)/2)*0.20;
       const x=cx+r*Math.cos(ang), y=cy+r*Math.sin(ang);
-      g+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6.5" fill="${d>=0?COLORS[i]:"var(--surface)"}" stroke="${COLORS[i]}" stroke-width="2"><title>${who(i)} 第${j+1}次：${v} mm（偏離 ${(d>=0?"+":"")}${d.toFixed(3)}）</title></circle>`;
+      const fly = animSet.has(i+"_"+j) && !noMotion();
+      const x0=(cx+R*1.55*Math.cos(ang)).toFixed(1), y0=(cy+R*1.55*Math.sin(ang)).toFixed(1);
+      const delay = fly ? (animSet.size>1 ? (i*N+j)*0.10 : 0) : 0;
+      const DUR = 1.05;
+      const ease='calcMode="spline" keyTimes="0;1" keySplines="0.22 0.7 0.3 1"';
+      if(fly){   // 殘影：同一條路徑上略為落後的淡色影子
+        for(let t=1;t<=4;t++){
+          const lag=t*0.075, op=(0.34-t*0.06).toFixed(2), rr=(6.2-t*0.7).toFixed(1);
+          g+=`<circle cx="${x0}" cy="${y0}" r="${rr}" fill="${COLORS[i]}" opacity="0">
+               <animate attributeName="cx" from="${x0}" to="${x.toFixed(1)}" begin="${(delay+lag).toFixed(3)}s" dur="${DUR}s" fill="freeze" ${ease}/>
+               <animate attributeName="cy" from="${y0}" to="${y.toFixed(1)}" begin="${(delay+lag).toFixed(3)}s" dur="${DUR}s" fill="freeze" ${ease}/>
+               <animate attributeName="opacity" values="0;${op};${op};0" keyTimes="0;0.12;0.72;1" begin="${(delay+lag).toFixed(3)}s" dur="${DUR}s" fill="freeze"/>
+             </circle>`;
+        }
+      }
+      const out=far(d);
+      g+=`<circle cx="${fly?x0:x.toFixed(1)}" cy="${fly?y0:y.toFixed(1)}" r="6.5"
+           fill="${d>=0?COLORS[i]:"var(--surface)"}" stroke="${COLORS[i]}" stroke-width="2"
+           ${out?'stroke-dasharray="3 2"':""} ${fly?`opacity="0"`:""}>
+           <title>${who(i)} 第${j+1}次：${v} mm（偏離 ${(d>=0?"+":"")}${d.toFixed(3)}${out?"，已超出 3s，畫在最外圈":""}）</title>`;
+      if(fly){
+        g+=`<animate attributeName="cx" from="${x0}" to="${x.toFixed(1)}" begin="${delay}s" dur="${DUR}s" fill="freeze" ${ease}/>
+            <animate attributeName="cy" from="${y0}" to="${y.toFixed(1)}" begin="${delay}s" dur="${DUR}s" fill="freeze" ${ease}/>
+            <animate attributeName="r" values="10;6.5" begin="${delay}s" dur="${DUR}s" fill="freeze" ${ease}/>
+            <animate attributeName="opacity" from="0" to="1" begin="${delay}s" dur="0.2s" fill="freeze"/>`;
+      }
+      g+=`</circle>`;
+      if(fly){
+        g+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6.5" fill="none" stroke="${COLORS[i]}" stroke-width="2" opacity="0">
+             <animate attributeName="r" from="7" to="22" begin="${(delay+DUR-0.06).toFixed(3)}s" dur="0.5s" fill="freeze"/>
+             <animate attributeName="opacity" values="0;0.55;0" begin="${(delay+DUR-0.06).toFixed(3)}s" dur="0.5s" fill="freeze"/>
+           </circle>`;
+      }
     });
   });
-  g+=`<text x="${cx}" y="${cy+R+40}" font-size="14" fill="var(--ink-soft)" text-anchor="middle">一圈 = 1s = ${s.toFixed(dec)} mm　（單位皆為 mm）</text>`;
+  g+=`<text x="${cx}" y="${cy+R+40}" font-size="14" fill="var(--ink-soft)" text-anchor="middle">靶心 ${center.toFixed(dec)} mm　｜　一圈 = 1s = ${s.toFixed(dec)} mm</text>`;
   g+=`<text x="${cx}" y="${cy+R+62}" font-size="14" fill="var(--ink-soft)" text-anchor="middle">實心是比靶心大，空心是比靶心小</text>`;
   return g+"</g></svg>";
 }
@@ -393,6 +440,8 @@ function render(){
   $("refWrap").hidden = mode!=="ref";
   $("subjectLine").textContent = $("subject").value || "尚未填寫量測對象";
 
+  $("setupBrief").textContent =
+    ($("subject").value||"未填對象") + "　靶心：" + (mode==="ref" ? "標準件 "+(isNaN(refVal)?"—":refVal.toFixed(3))+" mm" : "全班平均");
   $("centerNote").className = "flagbox" + (mode==="ref" ? "" : " warn");
   $("centerNote").innerHTML = mode==="ref"
     ? "靶心是標準件的校正值，所以這張圖同時看得到分散與偏差。"
@@ -415,7 +464,7 @@ function render(){
   const in2=all.filter(v=>Math.abs(v-center)<=2*s).length;
 
   $("chart").innerHTML = view==="target"?drawTarget(center,s,per):drawLine(center,s,per);
-  firstDraw=false;
+  firstDraw=false; animSet=new Set();
   $("legend").innerHTML = per.map((_,i)=>
     `<span><span class="dot" style="background:${COLORS[i]}"></span>${who(i)}</span>`).join("");
   $("viewHint").textContent = view==="target"
